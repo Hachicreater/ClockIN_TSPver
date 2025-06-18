@@ -1,0 +1,5 @@
+{
+  "token": "YOUR_DISCORD_TOKEN",
+  "clientId": "YOUR_BOT_APPLICATION_ID",
+  "guildId": "YOUR_DISCORD_SERVER_ID"
+}
