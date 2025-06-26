@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { hasPermission } = require('../utils/permissions');
+const { scheduleWorkEndCheck } = require('../cron/cronManager'); // ← 追加
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -53,6 +54,9 @@ module.exports = {
         console.error('❌ 出勤時間保存エラー:', err);
         return interaction.reply({ content: '💥 出勤時間の設定に失敗しました。', ephemeral: true });
       }
+
+      // 🔄 スケジュール即時登録・更新（再起動不要）
+      scheduleWorkEndCheck(interaction.client, guildId, endHour, endMinute);
 
       interaction.reply({
         content: `🕒 出勤可能時間を **${startHour.toString().padStart(2, '0')}:${startMinute.toString().padStart(2, '0')} ～ ${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}** に設定しました。`,
