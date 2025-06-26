@@ -5,7 +5,9 @@ const {
   TextInputStyle,
   ActionRowBuilder,
   PermissionFlagsBits,
-  UserSelectMenuBuilder
+  UserSelectMenuBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } = require('discord.js');
 const db = require('../db/database');
 const { formatDuration, updateTimecardMessage, sendLogToAdminChannel } = require('../utils/helpers');
@@ -38,7 +40,16 @@ module.exports = {
         const start = alertRow.start_hour * 60 + alertRow.start_minute;
         const end = alertRow.end_hour * 60 + alertRow.end_minute;
 
-        if (currentMinutes < start || currentMinutes > end) {
+        let withinWorkTime = false;
+        if (start <= end) {
+          // 同日内（例：09:00〜17:00）
+          withinWorkTime = currentMinutes >= start && currentMinutes <= end;
+        } else {
+          // 翌日またぎ（例：15:00〜29:00など）
+          withinWorkTime = currentMinutes >= start || currentMinutes <= (end - 1440);
+        }
+
+        if (!withinWorkTime) {
           return interaction.reply({
             content: `⏰ 出勤可能時間外です。\n出勤可能時間は **${alertRow.start_hour.toString().padStart(2, '0')}:${alertRow.start_minute.toString().padStart(2, '0')} ～ ${alertRow.end_hour.toString().padStart(2, '0')}:${alertRow.end_minute.toString().padStart(2, '0')}** です。`,
             ephemeral: true
@@ -125,6 +136,50 @@ module.exports = {
       });
     }
 
+    // 退勤ボタン
+    if (interaction.isButton() && interaction.customId === 'clockout') {
+      db.get(`SELECT clock_in_time, total_seconds FROM users WHERE guild_id = ? AND user_id = ?`, [guildId, userId], (err, row) => {
+        if (err) return console.error(err);
+
+        if (!row?.clock_in_time) {
+          return interaction.reply({ content: '🚫 出勤していません。', ephemeral: true });
+        }
+
+        const sessionSeconds = now - row.clock_in_time;
+        const totalSeconds = (row.total_seconds || 0) + sessionSeconds;
+
+        db.run(`UPDATE users SET clock_in_time = NULL, total_seconds = ? WHERE guild_id = ? AND user_id = ?`, [totalSeconds, guildId, userId]);
+
+        interaction.reply({
+          content: `🏁 退勤処理を行いました。\n🕒 今回の出勤時間：**${formatDuration(sessionSeconds)}**\n📊 累計出勤時間：**${formatDuration(totalSeconds)}**`,
+          ephemeral: true
+        });
+
+        db.get(`SELECT role_id, announce_channel_id FROM servers WHERE guild_id = ?`, [guildId], async (err, serverRow) => {
+          if (!err && serverRow?.role_id) {
+            const member = await interaction.guild.members.fetch(userId);
+            member.roles.remove(serverRow.role_id).catch(console.error);
+          }
+
+          if (serverRow?.announce_channel_id) {
+            const embed = new EmbedBuilder()
+              .setTitle('🏁 退勤ログ')
+              .setDescription(`<@${userId}> が退勤しました。`)
+              .addFields(
+                { name: '今回の出勤時間', value: formatDuration(sessionSeconds), inline: true },
+                { name: '累計出勤時間', value: formatDuration(totalSeconds), inline: true }
+              )
+              .setColor(0x808080)
+              .setTimestamp();
+
+            sendLogToAdminChannel(interaction.client, serverRow.announce_channel_id, embed);
+          }
+        });
+
+        updateTimecardMessage(interaction.client, guildId, db);
+      });
+    }
+
     // 労働時間集計
     if (interaction.isButton() && interaction.customId === 'summary_time') {
       const hasPerm = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || await hasPermission(interaction, db);
@@ -153,8 +208,27 @@ module.exports = {
       });
     }
 
-    // 労働時間リセット
+    // 労働時間リセット確認用ボタン
     if (interaction.isButton() && interaction.customId === 'reset_time') {
+      const hasPerm = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || await hasPermission(interaction, db);
+      if (!hasPerm) return interaction.reply({ content: '🚫 権限がありません。', ephemeral: true });
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('confirm_reset_time')
+          .setLabel('はい、リセットします')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      return interaction.reply({
+        content: '⚠️ 本当に全ユーザーの出勤記録と労働時間をリセットしてよろしいですか？',
+        components: [row],
+        ephemeral: true
+      });
+    }
+
+    // リセット確認ボタンが押されたとき
+    if (interaction.isButton() && interaction.customId === 'confirm_reset_time') {
       const hasPerm = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || await hasPermission(interaction, db);
       if (!hasPerm) return interaction.reply({ content: '🚫 権限がありません。', ephemeral: true });
 
@@ -173,9 +247,10 @@ module.exports = {
           }
         });
 
-        interaction.reply({ content: '✅ 労働時間をリセットしました。', ephemeral: true });
+        interaction.update({ content: '✅ 労働時間をリセットしました。', components: [], ephemeral: true });
       });
     }
+
 
     // --- 労働時間調整（ユーザー選択） ---
     if (interaction.isButton() && interaction.customId === 'adjust_time') {
