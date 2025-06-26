@@ -42,7 +42,14 @@ db.serialize(() => {
     alert_minute INTEGER
   )`);
 
-  console.log('✅ DB初期化完了：全テーブル作成済みまたは既存');
+  // 出勤終了時にロールが残っていたユーザーを一時保存
+  db.run(`CREATE TABLE IF NOT EXISTS pending_alerts (
+    guild_id TEXT,
+    user_id TEXT,
+    timestamp INTEGER
+  )`);
+
+  console.log('✅ DB構築完了：全テーブル作成済みまたは既存');
 });
 
 module.exports = db;
