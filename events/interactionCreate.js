@@ -38,15 +38,20 @@ module.exports = {
         }
 
         const start = alertRow.start_hour * 60 + alertRow.start_minute;
-        const end = alertRow.end_hour * 60 + alertRow.end_minute;
+        const endHour = alertRow.end_hour;
+        let end = endHour * 60 + alertRow.end_minute;
 
         let withinWorkTime = false;
-        if (start <= end) {
+
+        if (endHour >= 24) {
+          // 翌日扱いの終了時間（例：29:00 = 05:00）
+          withinWorkTime = currentMinutes >= start || currentMinutes <= (end - 1440);
+        } else if (start <= end) {
           // 同日内（例：09:00〜17:00）
           withinWorkTime = currentMinutes >= start && currentMinutes <= end;
         } else {
-          // 翌日またぎ（例：15:00〜29:00など）
-          withinWorkTime = currentMinutes >= start || currentMinutes <= (end - 1440);
+          // 0〜23時表記での翌日またぎ
+          withinWorkTime = currentMinutes >= start || currentMinutes <= end;
         }
 
         if (!withinWorkTime) {
